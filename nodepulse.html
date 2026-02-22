@@ -27,6 +27,16 @@
             --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.15);
         }
 
+        :root.dark-mode {
+            --bg-light: #0f172a;
+            --card-bg: #1e293b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #cbd5e1;
+            --border: #334155;
+            --shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.5);
+        }
+
         html {
             scroll-behavior: smooth;
         }
@@ -610,6 +620,114 @@
             color: var(--text-secondary);
         }
 
+        /* SEARCH & FILTER */
+        .search-filter-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            padding: 20px;
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            background: var(--card-bg);
+            color: var(--text-primary);
+            transition: all 0.3s ease;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .search-box input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .filter-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filter-controls select {
+            padding: 12px 15px;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            background: var(--card-bg);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .filter-controls select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        /* SUBJECT SECTIONS */
+        .subject-section {
+            margin-bottom: 40px;
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .subject-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .subject-header h2 {
+            color: var(--text-primary);
+            font-size: 24px;
+            margin: 0;
+        }
+
+        .subject-count {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .subject-notes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .empty-state-small {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-secondary);
+        }
+
         /* ADMIN STATS */
         .stats-grid {
             display: grid;
@@ -944,7 +1062,7 @@
                     </form>
                     <div class="alert alert-info" style="margin-top: 20px;">
                         <strong>Demo Credentials:</strong><br>
-                        📧 Email: admin@notepulse.com<br>
+                        📧 Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="c1a0a5aca8af81afaeb5a4b1b4adb2a4efa2aeac">[email&#160;protected]</a><br>
                         🔐 Password: Admin@2024#Secure
                     </div>
                 </div>
@@ -958,6 +1076,7 @@
             <div class="header-container">
                 <div class="logo">📝 NotePulse</div>
                 <div class="user-info">
+                    <button class="btn btn-primary btn-small" id="darkModeBtn" onclick="toggleDarkMode()" style="font-size: 18px; padding: 8px 12px;">🌙</button>
                     <span style="color: white; font-weight: 600;" id="userName"></span>
                     <button class="btn btn-primary btn-small" onclick="logout()">🚪 Logout</button>
                 </div>
@@ -969,6 +1088,7 @@
 
             <div class="tabs">
                 <button class="tab active" onclick="switchUserTab('browse')">📚 Browse Notes</button>
+                <button class="tab" onclick="switchUserTab('subjects')">📑 By Subject</button>
                 <button class="tab" onclick="switchUserTab('share')">✏️ Share Note</button>
                 <button class="tab" onclick="switchUserTab('mynotes')">📋 My Notes</button>
                 <button class="tab" onclick="switchUserTab('tasks')">✅ Tasks (24h)</button>
@@ -980,11 +1100,48 @@
                     <h2>📚 Community Notes</h2>
                     <p style="color: var(--text-secondary); margin-top: 10px;">Browse and discover notes shared by the community</p>
                 </div>
+                
+                <!-- Search & Filter Bar -->
+                <div class="search-filter-bar">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="🔍 Search notes by title, topic, author..." onkeyup="searchNotes()">
+                    </div>
+                    <div class="filter-controls">
+                        <select id="difficultyFilter" onchange="filterAndSearchNotes()" style="padding: 12px 15px; border: 2px solid var(--border); border-radius: 8px; background: var(--card-bg); cursor: pointer; color: var(--text-primary);">
+                            <option value="">All Levels</option>
+                            <option value="Beginner">🟢 Beginner</option>
+                            <option value="Intermediate">🟡 Intermediate</option>
+                            <option value="Advanced">🔴 Advanced</option>
+                        </select>
+                        
+                        <select id="sortBy" onchange="sortNotes()" style="padding: 12px 15px; border: 2px solid var(--border); border-radius: 8px; background: var(--card-bg); cursor: pointer; color: var(--text-primary);">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="title">Title (A-Z)</option>
+                        </select>
+                    </div>
+                </div>
+                
                 <div id="browseContainer" class="notes-grid">
                     <div class="empty-state" style="grid-column: 1/-1;">
                         <div class="empty-state-icon">📭</div>
                         <h3>No Notes Yet</h3>
                         <p>Be the first to share a note!</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Subjects -->
+            <div id="subjects" class="content">
+                <div class="form-section">
+                    <h2>📑 Browse by Subject</h2>
+                    <p style="color: var(--text-secondary); margin-top: 10px;">Find notes organized by subject</p>
+                </div>
+                <div id="subjectsContainer">
+                    <div class="empty-state" style="grid-column: 1/-1;">
+                        <div class="empty-state-icon">📭</div>
+                        <h3>No notes yet</h3>
+                        <p>Start sharing notes to see them here!</p>
                     </div>
                 </div>
             </div>
@@ -1008,10 +1165,22 @@
                             <label>📌 Note Title</label>
                             <input type="text" id="noteTitle" placeholder="Give your note a catchy title" required>
                         </div>
+                        <div class="form-group">
+                            <label>📑 Select Subject</label>
+                            <select id="noteSubject" required style="width: 100%; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 14px;">
+                                <option value="">Choose a subject...</option>
+                                <option value="dsa">📊 DSA (Data Structures & Algorithms)</option>
+                                <option value="maths">🔢 Maths</option>
+                                <option value="evs">🌍 EVS (Environmental Studies)</option>
+                                <option value="ai">🤖 Essentials of AI</option>
+                                <option value="electrical">⚡ Electrical</option>
+                                <option value="physics">🔬 Applied Physics</option>
+                            </select>
+                        </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>📚 Topic/Subject</label>
-                                <input type="text" id="noteTopic" placeholder="e.g., Python, Biology, History" required>
+                                <label>📚 Topic/Subtopic</label>
+                                <input type="text" id="noteTopic" placeholder="e.g., Arrays, Calculus, Solar Energy" required>
                             </div>
                             <div class="form-group">
                                 <label>📊 Difficulty Level</label>
@@ -1038,7 +1207,7 @@
                                 📊 Max 10MB total | Supported: PDF, Word, PowerPoint, Images
                             </small>
                         </div>
-                        <button type="submit" class="form-submit">🚀 Submit for Approval</button>
+                        <button type="submit" class="form-submit">🚀 Publish Note</button>
                     </form>
                 </div>
             </div>
@@ -1087,20 +1256,21 @@
             <div class="header-container">
                 <div class="logo">📝 NotePulse Admin</div>
                 <div class="user-info">
+                    <button class="btn btn-primary btn-small" id="darkModeBtn" onclick="toggleDarkMode()" style="font-size: 18px; padding: 8px 12px;">🌙</button>
                     <span style="color: white; font-weight: 600;">👨‍💼 Administrator</span>
                     <button class="btn btn-primary btn-small" onclick="logout()">🚪 Logout</button>
                 </div>
             </div>
         </header>
 
+
         <div class="container">
             <div id="adminAlert"></div>
 
             <div class="tabs">
                 <button class="tab active" onclick="switchAdminTab('dashboard')">📊 Dashboard</button>
-                <button class="tab" onclick="switchAdminTab('pending')">⏳ Pending</button>
-                <button class="tab" onclick="switchAdminTab('approved')">✅ Approved</button>
-                <button class="tab" onclick="switchAdminTab('users')">👥 Users</button>
+                <button class="tab" onclick="switchAdminTab('published')">📤 Published Notes</button>
+                <button class="tab" onclick="switchAdminTab('users')">👥 Users & Blocking</button>
             </div>
 
             <!-- Dashboard -->
@@ -1111,45 +1281,26 @@
                         <div class="stat-label">📊 Total Notes</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-number" style="color: var(--success);" id="approvedCount">0</div>
-                        <div class="stat-label">✅ Approved</div>
+                        <div class="stat-number" style="color: var(--success);" id="publishedCount">0</div>
+                        <div class="stat-label">📤 Published</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-number" style="color: var(--warning);" id="pendingCount">0</div>
-                        <div class="stat-label">⏳ Pending</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" style="color: var(--danger);" id="rejectedCount">0</div>
-                        <div class="stat-label">❌ Rejected</div>
+                        <div class="stat-number" style="color: var(--danger);" id="blockedCount">0</div>
+                        <div class="stat-label">🚫 Blocked Users</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Pending -->
-            <div id="pending" class="content">
+            <!-- Published -->
+            <div id="published" class="content">
                 <div class="form-section">
-                    <h2>⏳ Pending Approvals</h2>
-                    <p style="color: var(--text-secondary); margin-top: 10px;">Review and approve pending notes</p>
+                    <h2>📤 All Published Notes</h2>
+                    <p style="color: var(--text-secondary); margin-top: 10px;">Manage and review all published notes</p>
                 </div>
-                <div id="pendingContainer" class="notes-grid">
-                    <div class="empty-state" style="grid-column: 1/-1;">
-                        <div class="empty-state-icon">✅</div>
-                        <h3>All Caught Up!</h3>
-                        <p>No pending notes to review</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Approved -->
-            <div id="approved" class="content">
-                <div class="form-section">
-                    <h2>✅ Approved Notes</h2>
-                    <p style="color: var(--text-secondary); margin-top: 10px;">Manage published notes</p>
-                </div>
-                <div id="approvedContainer" class="notes-grid">
+                <div id="publishedContainer" class="notes-grid">
                     <div class="empty-state" style="grid-column: 1/-1;">
                         <div class="empty-state-icon">📭</div>
-                        <h3>No Approved Notes</h3>
+                        <h3>No Published Notes</h3>
                     </div>
                 </div>
             </div>
@@ -1157,8 +1308,8 @@
             <!-- Users -->
             <div id="users" class="content">
                 <div class="form-section">
-                    <h2>👥 Registered Users</h2>
-                    <p style="color: var(--text-secondary); margin-top: 10px;">View all registered users and their activity</p>
+                    <h2>👥 Users & Blocking Management</h2>
+                    <p style="color: var(--text-secondary); margin-top: 10px;">View all registered users and manage their access</p>
                 </div>
                 <div class="table-container">
                     <table>
@@ -1168,11 +1319,12 @@
                                 <th>📧 Email</th>
                                 <th>📅 Joined</th>
                                 <th>📝 Notes</th>
+                                <th>⚙️ Actions</th>
                             </tr>
                         </thead>
                         <tbody id="usersTable">
                             <tr>
-                                <td colspan="4" style="text-align: center; padding: 40px;">No users registered yet</td>
+                                <td colspan="5" style="text-align: center; padding: 40px;">No users registered yet</td>
                             </tr>
                         </tbody>
                     </table>

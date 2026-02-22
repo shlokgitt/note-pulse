@@ -1,19 +1,59 @@
 let users = JSON.parse(localStorage.getItem('users')) || [];
 let notes = JSON.parse(localStorage.getItem('notes')) || [];
 let tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+let blockedUsers = JSON.parse(localStorage.getItem('blockedUsers')) || [];
 let currentUser = null;
 let editingNoteId = null;
+let filteredNotes = [];
 
-const ADMIN_EMAIL = 'admin@notepulse.com';
-const ADMIN_PASSWORD = 'Admin@2024#Secure';
+const ADMIN_EMAIL = 'shloksri003@gmail.com';
+const ADMIN_PASSWORD = 'shloksri@';
+
+// SUBJECTS LIST
+const SUBJECTS = [
+    { id: 'dsa', name: '📊 DSA (Data Structures & Algorithms)', emoji: '📊', color: '#3b82f6' },
+    { id: 'maths', name: '🔢 Maths', emoji: '🔢', color: '#8b5cf6' },
+    { id: 'evs', name: '🌍 EVS (Environmental Studies)', emoji: '🌍', color: '#10b981' },
+    { id: 'ai', name: '🤖 Essentials of AI', emoji: '🤖', color: '#f59e0b' },
+    { id: 'electrical', name: '⚡ Electrical', emoji: '⚡', color: '#ef4444' },
+    { id: 'physics', name: '🔬 Applied Physics', emoji: '🔬', color: '#06b6d4' }
+];
+
+// DARK MODE FUNCTIONS
+function toggleDarkMode() {
+    const html = document.documentElement;
+    const isDark = html.classList.toggle('dark-mode');
+    
+    // Store preference
+    localStorage.setItem('darkMode', isDark);
+    
+    // Update icon
+    const btn = document.getElementById('darkModeBtn');
+    if (btn) {
+        btn.textContent = isDark ? '☀️' : '🌙';
+    }
+}
+
+function loadDarkModePreference() {
+    const isDark = localStorage.getItem('darkMode') === 'true';
+    if (isDark) {
+        document.documentElement.classList.add('dark-mode');
+        const btn = document.getElementById('darkModeBtn');
+        if (btn) {
+            btn.textContent = '☀️';
+        }
+    }
+}
 
 // LOGIN FUNCTIONS
-function switchLoginTab(tab) {
+
+    function switchLoginTab(tab) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     document.getElementById(tab).classList.add('active');
     event.currentTarget.classList.add('active');
 }
+
 
 function signupUser(e) {
     e.preventDefault();
@@ -94,14 +134,15 @@ function loginUser(e) {
 
 function loginAdmin(e) {
     e.preventDefault();
-    const email = document.getElementById('adminEmailField').value;
-    const password = document.getElementById('adminPasswordField').value;
+    const email = document.getElementById('adminEmailField').value.trim();
+    const password = document.getElementById('adminPasswordField').value.trim();
     const rememberMe = document.getElementById('rememberMeAdmin').checked;
 
     if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+
         currentUser = { id: 'admin', role: 'admin' };
         localStorage.setItem('isAdmin', 'true');
-        
+
         if (rememberMe) {
             localStorage.setItem('rememberedAdminEmail', email);
             localStorage.setItem('rememberedAdminPassword', password);
@@ -109,15 +150,17 @@ function loginAdmin(e) {
             localStorage.removeItem('rememberedAdminEmail');
             localStorage.removeItem('rememberedAdminPassword');
         }
-        
+
         showAlert('✅ Admin login successful!', 'success', 'loginAlert');
+
         setTimeout(() => {
             document.getElementById('loginSection').classList.remove('active');
             document.getElementById('adminSection').classList.add('active');
             updateAdminDashboard();
         }, 1000);
+
     } else {
-        showAlert('Invalid admin credentials', 'danger', 'loginAlert');
+        showAlert('❌ Wrong Admin Credentials', 'danger', 'loginAlert');
     }
 }
 
@@ -129,12 +172,20 @@ function switchUserTab(tab) {
     event.currentTarget.classList.add('active');
 
     if (tab === 'browse') loadBrowseNotes();
+    if (tab === 'subjects') loadSubjectNotes();
     if (tab === 'mynotes') loadMyNotes();
     if (tab === 'tasks') loadTasks();
 }
 
 function shareNote(e) {
     e.preventDefault();
+    
+    // Check if user is blocked
+    if (blockedUsers.includes(currentUser.id)) {
+        showAlert('❌ Your account has been blocked by admin. You cannot publish notes.', 'danger', 'userAlert');
+        return;
+    }
+    
     const files = document.getElementById('noteFiles').files;
     
     let attachments = [];
@@ -145,21 +196,23 @@ function shareNote(e) {
             id: Date.now(),
             title: document.getElementById('noteTitle').value,
             topic: document.getElementById('noteTopic').value,
+            subject: document.getElementById('noteSubject').value,
             difficulty: document.getElementById('noteDifficulty').value,
             content: document.getElementById('noteContent').value,
             isImportant: document.getElementById('isImportant').checked,
             attachments: attachments,
             author: currentUser.name,
             userId: currentUser.id,
-            status: 'pending',
+            status: 'published',
             createdAt: new Date().toLocaleDateString(),
             updatedAt: new Date().toLocaleDateString()
         };
 
         notes.push(note);
         localStorage.setItem('notes', JSON.stringify(notes));
-        showAlert('✅ Note submitted for approval!', 'success', 'userAlert');
+        showAlert('✅ Note published successfully!', 'success', 'userAlert');
         document.getElementById('noteTitle').value = '';
+        document.getElementById('noteSubject').value = '';
         document.getElementById('noteTopic').value = '';
         document.getElementById('noteContent').value = '';
         document.getElementById('isImportant').checked = false;
@@ -188,10 +241,60 @@ function shareNote(e) {
 }
 
 function loadBrowseNotes() {
-    const approved = notes.filter(n => n.status === 'approved');
-    const html = approved.length === 0 
-        ? '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">📭</div><h3>No approved notes</h3></div>'
-        : approved.map(n => `
+    const published = notes.filter(n => n.status === 'published');
+    displayNotesGrid(published, 'browseContainer');
+}
+
+// SEARCH & FILTER FUNCTIONS
+function searchNotes() {
+    const query = document.getElementById('searchInput').value.toLowerCase();
+    const difficulty = document.getElementById('difficultyFilter').value;
+    
+    filteredNotes = notes.filter(n => {
+        const matchesQuery = n.title.toLowerCase().includes(query) ||
+                           n.topic.toLowerCase().includes(query) ||
+                           n.content.toLowerCase().includes(query) ||
+                           n.author.toLowerCase().includes(query);
+        
+        const matchesDifficulty = !difficulty || n.difficulty === difficulty;
+        
+        return n.status === 'published' && matchesQuery && matchesDifficulty;
+    });
+    
+    displayNotesGrid(filteredNotes, 'browseContainer');
+}
+
+function filterAndSearchNotes() {
+    searchNotes();
+}
+
+function sortNotes() {
+    const sortBy = document.getElementById('sortBy').value;
+    
+    switch(sortBy) {
+        case 'newest':
+            filteredNotes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            break;
+        case 'oldest':
+            filteredNotes.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+            break;
+        case 'title':
+            filteredNotes.sort((a, b) => a.title.localeCompare(b.title));
+            break;
+    }
+    
+    displayNotesGrid(filteredNotes, 'browseContainer');
+}
+
+function displayNotesGrid(notesToDisplay, containerId) {
+    if (notesToDisplay.length === 0) {
+        if (document.getElementById('searchInput') && document.getElementById('searchInput').value) {
+            var html = '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">🔍</div><h3>No notes found</h3><p>Try different search terms</p></div>';
+        } else {
+            var html = '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">📭</div><h3>No published notes</h3><p>Be the first to share a note!</p></div>';
+        }
+    } else {
+        var html = notesToDisplay.map(n => `
             <div class="note-card" onclick="viewNote(${n.id})">
                 ${n.isImportant ? '<div style="position: absolute; top: 10px; right: 10px; font-size: 24px;">⭐</div>' : ''}
                 <div class="note-header">
@@ -203,10 +306,58 @@ function loadBrowseNotes() {
                     <div class="note-text">${n.content.substring(0, 150)}...</div>
                     ${n.attachments && n.attachments.length > 0 ? `<div style="margin-top: 10px; color: var(--primary); font-weight: 600; font-size: 12px;">📎 ${n.attachments.length} file(s)</div>` : ''}
                 </div>
-                <div class="note-footer"><span class="status-badge status-approved">✓ Approved</span></div>
+                <div class="note-footer"><span class="status-badge status-approved">✓ Published</span></div>
             </div>
         `).join('');
-    document.getElementById('browseContainer').innerHTML = html;
+    }
+    document.getElementById(containerId).innerHTML = html;
+}
+
+// SUBJECT-BASED FUNCTIONS
+function getNotesBySubject(subjectId) {
+    return notes.filter(n => n.status === 'published' && n.subject === subjectId);
+}
+
+function loadSubjectNotes() {
+    const html = SUBJECTS.map(subject => {
+        const subjectNotes = getNotesBySubject(subject.id);
+        const notesHtml = subjectNotes.length === 0 
+            ? `<div class="empty-state-small">
+                <div style="font-size: 32px; margin-bottom: 10px;">📭</div>
+                <p style="color: var(--text-secondary);">No notes yet</p>
+              </div>`
+            : subjectNotes.map(n => `
+                <div class="note-card" onclick="viewNote(${n.id})">
+                    ${n.isImportant ? '<div style="position: absolute; top: 10px; right: 10px; font-size: 24px;">⭐</div>' : ''}
+                    <div class="note-header">
+                        <div class="note-title">${n.title}</div>
+                        <div class="note-author">by ${n.author}</div>
+                    </div>
+                    <div class="note-content">
+                        <div class="note-meta"><span class="badge">📚 ${n.topic}</span> <span class="badge">📊 ${n.difficulty}</span></div>
+                        <div class="note-text">${n.content.substring(0, 100)}...</div>
+                    </div>
+                    <div class="note-footer"><span class="status-badge status-approved">✓ Published</span></div>
+                </div>
+            `).join('');
+
+        return `
+            <div class="subject-section">
+                <div class="subject-header">
+                    <h2 style="display: flex; align-items: center; gap: 10px; margin: 0;">
+                        <span style="font-size: 28px;">${subject.emoji}</span>
+                        ${subject.name}
+                    </h2>
+                    <span class="subject-count">${subjectNotes.length} note${subjectNotes.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div class="subject-notes-grid">
+                    ${notesHtml}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('subjectsContainer').innerHTML = html;
 }
 
 function loadMyNotes() {
@@ -225,10 +376,9 @@ function loadMyNotes() {
                     <div class="note-text">${n.content.substring(0, 150)}...</div>
                 </div>
                 <div class="note-footer">
-                    <span class="status-badge ${n.status === 'approved' ? 'status-approved' : n.status === 'pending' ? 'status-pending' : 'status-rejected'}">
-                        ${n.status === 'approved' ? '✓ Approved' : n.status === 'pending' ? '⏳ Pending' : '✕ Rejected'}
-                    </span>
-                    ${n.status === 'pending' ? `<button class="btn btn-warning btn-small" onclick="editNote(${n.id}); event.stopPropagation();">✏️ Edit</button><button class="btn btn-danger btn-small" onclick="deleteNote(${n.id}); event.stopPropagation();">🗑️ Delete</button>` : `<button class="btn btn-primary btn-small" onclick="viewNote(${n.id}); event.stopPropagation();">👁️ View</button>`}
+                    <span class="status-badge status-approved">✓ Published</span>
+                    <button class="btn btn-warning btn-small" onclick="editNote(${n.id}); event.stopPropagation();">✏️ Edit</button>
+                    <button class="btn btn-danger btn-small" onclick="deleteNote(${n.id}); event.stopPropagation();">🗑️ Delete</button>
                 </div>
             </div>
         `).join('');
@@ -382,41 +532,15 @@ function switchAdminTab(tab) {
     document.getElementById(tab).classList.add('active');
     event.currentTarget.classList.add('active');
 
-    if (tab === 'pending') loadPendingNotes();
-    if (tab === 'approved') loadApprovedNotes();
+    if (tab === 'published') loadPublishedNotes();
     if (tab === 'users') loadUsersList();
 }
 
-function loadPendingNotes() {
-    const pending = notes.filter(n => n.status === 'pending');
-    const html = pending.length === 0 
-        ? '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">✅</div><h3>All caught up!</h3></div>'
-        : pending.map(n => `
-            <div class="note-card" onclick="viewNote(${n.id})">
-                <div class="note-header">
-                    <div class="note-title">${n.title}</div>
-                    <div class="note-author">by ${n.author}</div>
-                </div>
-                <div class="note-content">
-                    <div class="note-meta"><span class="badge">📚 ${n.topic}</span> <span class="badge">📊 ${n.difficulty}</span></div>
-                    <div class="note-text">${n.content.substring(0, 150)}...</div>
-                    ${n.attachments && n.attachments.length > 0 ? `<div style="margin-top: 10px;"><div style="color: var(--primary); font-weight: 600; font-size: 12px;">📎 ${n.attachments.length} file(s)</div></div>` : ''}
-                </div>
-                <div class="note-footer">
-                    <span class="status-badge status-pending">⏳ Pending</span>
-                    <button class="btn btn-success btn-small" onclick="approveNote(${n.id}); event.stopPropagation();">✅ Approve</button>
-                    <button class="btn btn-danger btn-small" onclick="rejectNote(${n.id}); event.stopPropagation();">❌ Reject</button>
-                </div>
-            </div>
-        `).join('');
-    document.getElementById('pendingContainer').innerHTML = html;
-}
-
-function loadApprovedNotes() {
-    const approved = notes.filter(n => n.status === 'approved');
-    const html = approved.length === 0 
-        ? '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">📭</div><h3>No approved notes</h3></div>'
-        : approved.map(n => `
+function loadPublishedNotes() {
+    const published = notes.filter(n => n.status === 'published');
+    const html = published.length === 0 
+        ? '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">📭</div><h3>No published notes</h3></div>'
+        : published.map(n => `
             <div class="note-card" onclick="viewNote(${n.id})">
                 ${n.isImportant ? '<div style="position: absolute; top: 10px; right: 10px; font-size: 24px;">⭐</div>' : ''}
                 <div class="note-header">
@@ -428,47 +552,51 @@ function loadApprovedNotes() {
                     <div class="note-text">${n.content.substring(0, 150)}...</div>
                 </div>
                 <div class="note-footer">
-                    <span class="status-badge status-approved">✓ Approved</span>
+                    <span class="status-badge status-approved">✓ Published</span>
                     <button class="btn btn-danger btn-small" onclick="deleteAdminNote(${n.id}); event.stopPropagation();">🗑️ Delete</button>
                 </div>
             </div>
         `).join('');
-    document.getElementById('approvedContainer').innerHTML = html;
+    document.getElementById('publishedContainer').innerHTML = html;
 }
 
 function loadUsersList() {
     const rows = users.length === 0
-        ? '<tr><td colspan="4" style="text-align: center; padding: 40px;">No users</td></tr>'
+        ? '<tr><td colspan="5" style="text-align: center; padding: 40px;">No users</td></tr>'
         : users.map(u => `
             <tr>
                 <td><strong>${u.name}</strong></td>
                 <td>${u.email}</td>
                 <td>${u.createdAt}</td>
                 <td><span class="badge">${notes.filter(n => n.userId === u.id).length}</span></td>
+                <td>
+                    ${blockedUsers.includes(u.id) 
+                        ? `<button class="btn btn-success btn-small" onclick="unblockUser(${u.id}); event.stopPropagation();">✓ Unblock</button>`
+                        : `<button class="btn btn-danger btn-small" onclick="blockUser(${u.id}); event.stopPropagation();">🚫 Block</button>`
+                    }
+                </td>
             </tr>
         `).join('');
     document.getElementById('usersTable').innerHTML = rows;
 }
 
-function approveNote(id) {
-    const note = notes.find(n => n.id === id);
-    if (note) {
-        note.status = 'approved';
-        localStorage.setItem('notes', JSON.stringify(notes));
-        showAlert('✅ Note approved!', 'success', 'adminAlert');
-        loadPendingNotes();
-        updateAdminDashboard();
+function blockUser(userId) {
+    if (confirm('Block this user? They will not be able to publish new notes.')) {
+        if (!blockedUsers.includes(userId)) {
+            blockedUsers.push(userId);
+            localStorage.setItem('blockedUsers', JSON.stringify(blockedUsers));
+            showAlert('✅ User blocked successfully!', 'success', 'adminAlert');
+            loadUsersList();
+        }
     }
 }
 
-function rejectNote(id) {
-    const note = notes.find(n => n.id === id);
-    if (note) {
-        note.status = 'rejected';
-        localStorage.setItem('notes', JSON.stringify(notes));
-        showAlert('❌ Note rejected!', 'success', 'adminAlert');
-        loadPendingNotes();
-        updateAdminDashboard();
+function unblockUser(userId) {
+    if (confirm('Unblock this user? They will be able to publish notes again.')) {
+        blockedUsers = blockedUsers.filter(id => id !== userId);
+        localStorage.setItem('blockedUsers', JSON.stringify(blockedUsers));
+        showAlert('✅ User unblocked successfully!', 'success', 'adminAlert');
+        loadUsersList();
     }
 }
 
@@ -484,9 +612,8 @@ function deleteAdminNote(id) {
 
 function updateAdminDashboard() {
     document.getElementById('totalNotes').textContent = notes.length;
-    document.getElementById('approvedCount').textContent = notes.filter(n => n.status === 'approved').length;
-    document.getElementById('pendingCount').textContent = notes.filter(n => n.status === 'pending').length;
-    document.getElementById('rejectedCount').textContent = notes.filter(n => n.status === 'rejected').length;
+    document.getElementById('publishedCount').textContent = notes.filter(n => n.status === 'published').length;
+    document.getElementById('blockedCount').textContent = blockedUsers.length;
 }
 
 // FILE FUNCTIONS
@@ -560,6 +687,13 @@ document.addEventListener('DOMContentLoaded', () => {
     users = JSON.parse(localStorage.getItem('users')) || [];
     notes = JSON.parse(localStorage.getItem('notes')) || [];
     tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+    blockedUsers = JSON.parse(localStorage.getItem('blockedUsers')) || [];
+    
+    // Load dark mode preference
+    loadDarkModePreference();
+    
+    // Initialize filtered notes with all published notes
+    filteredNotes = notes.filter(n => n.status === 'published');
 
     // Check for remembered user credentials
     const rememberedUserEmail = localStorage.getItem('rememberedUserEmail');
