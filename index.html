@@ -4,6 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://*.firebaseio.com https://*.googleapis.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.firebaseio.com https://*.googleapis.com wss://*.firebaseio.com https://*.cloudfunctions.net; img-src 'self' data: blob:; font-src 'self'; frame-src 'self' https://*.firebaseapp.com;">
     <title>NotePulse - Share & Manage Notes</title>
     <style>
         * {
@@ -186,14 +189,12 @@
 
         /* LOGIN */
         .login-container {
-            max-width: 900px;
+            max-width: 500px;
             margin: 80px auto;
         }
 
         .login-columns {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0;
+            display: block;
         }
 
         .login-column {
@@ -201,7 +202,7 @@
         }
 
         .login-column:first-child {
-            border-right: 2px solid var(--border);
+            border-right: none;
         }
 
         .login-column-title {
@@ -1104,32 +1105,8 @@
                 <div id="loginAlert"></div>
 
                 <div class="login-columns">
-                    <!-- Admin Login Column -->
-                    <div class="login-column">
-                        <div class="login-column-title">🔑 Admin Login</div>
-                        <div class="login-column-subtitle">For administrators only</div>
-                        <form onsubmit="loginAdmin(event)">
-                            <div class="form-group">
-                                <label>📧 Admin Email</label>
-                                <input type="email" placeholder="admin@notepulse.com" required id="adminEmailField">
-                            </div>
-                            <div class="form-group">
-                                <label>🔐 Password</label>
-                                <input type="password" placeholder="Enter admin password" required
-                                    id="adminPasswordField">
-                            </div>
-                            <div class="form-group"
-                                style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px;">
-                                <input type="checkbox" id="rememberMeAdmin"
-                                    style="width: 20px; height: 20px; cursor: pointer;">
-                                <label style="margin: 0; cursor: pointer; font-weight: 500;">✅ Remember me</label>
-                            </div>
-                            <button type="submit" class="form-submit">🔓 Admin Login</button>
-                        </form>
-                    </div>
-
                     <!-- Mobile-only divider -->
-                    <div class="or-divider">— OR —</div>
+                    <div class="or-divider" style="display:none;">— OR —</div>
 
                     <!-- Room Code Column -->
                     <div class="login-column">
@@ -1374,90 +1351,7 @@
         </div>
     </div>
 
-    <!-- ADMIN SECTION -->
-    <div id="adminSection" class="section">
-        <header>
-            <div class="header-container">
-                <div class="logo">📝 NotePulse Admin</div>
-                <div class="user-info">
-                    <button class="btn btn-primary btn-small" id="darkModeBtn" onclick="toggleDarkMode()"
-                        style="font-size: 18px; padding: 8px 12px;">🌙</button>
-                    <span style="color: white; font-weight: 600;">👨‍💼 Administrator</span>
-                    <button class="btn btn-primary btn-small" onclick="logout()">🚪 Logout</button>
-                </div>
-            </div>
-        </header>
-
-
-        <div class="container">
-            <div id="adminAlert"></div>
-
-            <div class="tabs">
-                <button class="tab active" onclick="switchAdminTab('dashboard')">📊 Dashboard</button>
-                <button class="tab" onclick="switchAdminTab('published')">📤 Published Notes</button>
-                <button class="tab" onclick="switchAdminTab('users')">👥 Users & Blocking</button>
-            </div>
-
-            <!-- Dashboard -->
-            <div id="dashboard" class="content active">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number" id="totalNotes">0</div>
-                        <div class="stat-label">📊 Total Notes</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" style="color: var(--success);" id="publishedCount">0</div>
-                        <div class="stat-label">📤 Published</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" style="color: var(--danger);" id="blockedCount">0</div>
-                        <div class="stat-label">🚫 Blocked Users</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Published -->
-            <div id="published" class="content">
-                <div class="form-section">
-                    <h2>📤 All Published Notes</h2>
-                    <p style="color: var(--text-secondary); margin-top: 10px;">Manage and review all published notes</p>
-                </div>
-                <div id="publishedContainer" class="notes-grid">
-                    <div class="empty-state" style="grid-column: 1/-1;">
-                        <div class="empty-state-icon">📭</div>
-                        <h3>No Published Notes</h3>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Users -->
-            <div id="users" class="content">
-                <div class="form-section">
-                    <h2>👥 Users & Blocking Management</h2>
-                    <p style="color: var(--text-secondary); margin-top: 10px;">View all registered users and manage
-                        their access</p>
-                </div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>👤 Name</th>
-                                <th>📧 Email</th>
-                                <th>📅 Joined</th>
-                                <th>📝 Notes</th>
-                                <th>⚙️ Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="usersTable">
-                            <tr>
-                                <td colspan="5" style="text-align: center; padding: 40px;">No users registered yet</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- ADMIN SECTION MOVED TO admin.html -->
 
     <!-- VIEW MODAL -->
     <div id="viewModal" class="modal" onclick="if(event.target === this) closeModal()">
@@ -1515,6 +1409,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
     <script src="config.js"></script>
 
     <!-- Load App Logic AFTER Firebase -->

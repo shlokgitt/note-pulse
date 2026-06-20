@@ -1,22 +1,106 @@
 // ==========================================
-// NOTEPULSE - FINAL COMPLETE VERSION
-// Fixed: 1) Attachment display 2) Admin user data
+// NOTEPULSE - SECURITY HARDENED VERSION
+// ==========================================
+
+// ==========================================
+// SECURITY UTILITIES
+// ==========================================
+
+// XSS Protection: Escape all HTML entities
+function escapeHTML(str) {
+    if (str === null || str === undefined) return '';
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(String(str)));
+    return div.innerHTML;
+}
+
+// Input sanitization with length limits
+function sanitizeInput(str, maxLength = 500) {
+    if (!str) return '';
+    return String(str).trim().substring(0, maxLength);
+}
+
+// Secure ID generation (non-predictable)
+function generateSecureId() {
+    const array = new Uint32Array(2);
+    crypto.getRandomValues(array);
+    return Date.now().toString(36) + array[0].toString(36) + array[1].toString(36);
+}
+
+// Rate limiting for form submissions
+const rateLimiter = {
+    attempts: {},
+    check(action, maxAttempts = 5, windowMs = 60000) {
+        const now = Date.now();
+        if (!this.attempts[action]) this.attempts[action] = [];
+        this.attempts[action] = this.attempts[action].filter(t => now - t < windowMs);
+        if (this.attempts[action].length >= maxAttempts) return false;
+        this.attempts[action].push(now);
+        return true;
+    }
+};
+
+// File validation constants
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_TOTAL_FILES_SIZE = 10 * 1024 * 1024;
+const ALLOWED_FILE_TYPES = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'image/jpeg', 'image/png', 'image/gif'
+];
+const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.jpg', '.jpeg', '.png', '.gif'];
+
+function validateFile(file) {
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        return { valid: false, error: `File type "${escapeHTML(ext)}" not allowed` };
+    }
+    if (file.size > MAX_FILE_SIZE) {
+        return { valid: false, error: `File "${escapeHTML(file.name)}" exceeds 10MB limit` };
+    }
+    return { valid: true };
+}
+
+// Session timeout (30 min inactivity)
+let sessionTimer = null;
+function resetSessionTimer() {
+    clearTimeout(sessionTimer);
+    sessionTimer = setTimeout(() => {
+        if (currentUser) {
+            logout();
+            showAlert('⏱️ Session expired due to inactivity', 'info', 'loginAlert');
+        }
+    }, 30 * 60 * 1000);
+}
+document.addEventListener('click', resetSessionTimer);
+document.addEventListener('keypress', resetSessionTimer);
+
+// ==========================================
+// APP STATE
 // ==========================================
 
 let users = JSON.parse(localStorage.getItem('users')) || [];
 let notes = [];
 let tasks = JSON.parse(localStorage.getItem('tasks')) || [];
-let blockedUsers = JSON.parse(localStorage.getItem('blockedUsers')) || [];
+let blockedUsers = [];
 let currentUser = null;
 let editingNoteId = null;
 let filteredNotes = [];
-// ✅ Admin email - change this to your admin email address
 const ADMIN_EMAIL = 'shloksri003@gmail.com';
 
 function loginAdmin(e) {
     e.preventDefault();
-    const email = document.getElementById('adminEmailField').value.trim();
-    const password = document.getElementById('adminPasswordField').value.trim();
+
+    if (!rateLimiter.check('adminLogin', 5, 60000)) {
+        showAlert('❌ Too many login attempts. Please wait 1 minute.', 'danger', 'loginAlert');
+        return;
+    }
+
+    const email = sanitizeInput(document.getElementById('adminEmailField').value, 100);
+    const password = document.getElementById('adminPasswordField').value;
     
     if (!email || !password) {
         showAlert('❌ Please enter email and password', 'danger', 'loginAlert');
@@ -25,39 +109,49 @@ function loginAdmin(e) {
 
     firebase.auth().signInWithEmailAndPassword(email, password)
         .then((userCredential) => {
-            // ✅ Check if the signed-in email matches the admin email
-            if (userCredential.user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
-                currentUser = { id: 'admin', role: 'admin', uid: userCredential.user.uid };
-                localStorage.setItem('isAdmin', 'true');
-                showAlert('✅ Admin login successful!', 'success', 'loginAlert');
-                setTimeout(() => {
-                    document.getElementById('loginSection').classList.remove('active');
-                    document.getElementById('adminSection').classList.add('active');
-                    updateAdminDashboard();
-                    startNotesSync();
-                }, 800);
-            } else {
-                showAlert('❌ You are not an admin!', 'danger', 'loginAlert');
-                firebase.auth().signOut();
-            }
+            // Verify server-side admin role
+            ensureFirebase().then(db => {
+                db.ref('admins/' + userCredential.user.uid).once('value').then(snapshot => {
+                    if (snapshot.exists() && snapshot.val() === true) {
+                        currentUser = { id: 'admin', role: 'admin', uid: userCredential.user.uid };
+                        showAlert('✅ Admin login successful!', 'success', 'loginAlert');
+                        resetSessionTimer();
+                        setTimeout(() => {
+                            document.getElementById('loginSection').classList.remove('active');
+                            document.getElementById('adminSection').classList.add('active');
+                            updateAdminDashboard();
+                            startNotesSync();
+                            syncBlockedUsers();
+                        }, 800);
+                    } else {
+                        showAlert('❌ You are not an admin!', 'danger', 'loginAlert');
+                        firebase.auth().signOut();
+                    }
+                }).catch(err => {
+                    showAlert('❌ Could not verify admin status.', 'danger', 'loginAlert');
+                    firebase.auth().signOut();
+                });
+            });
         })
         .catch((error) => {
-            showAlert('❌ Login failed: ' + error.message, 'danger', 'loginAlert');
+            console.error('Admin login error:', error.code, error.message);
+            if (error.code === 'auth/too-many-requests') {
+                showAlert('❌ Too many attempts. Try again later.', 'danger', 'loginAlert');
+            } else {
+                showAlert('❌ Login failed. Check your credentials.', 'danger', 'loginAlert');
+            }
         });
 }
 
-// 🔑 Call this from browser console to reset admin password:
-// resetAdminPassword()
-function resetAdminPassword() {
-    firebase.auth().sendPasswordResetEmail(ADMIN_EMAIL)
-        .then(() => {
-            console.log('✅ Password reset email sent to: ' + ADMIN_EMAIL);
-            alert('✅ Password reset email sent to: ' + ADMIN_EMAIL + '\nCheck your inbox (and spam folder).');
-        })
-        .catch((error) => {
-            console.error('❌ Error:', error.message);
-            alert('❌ Error: ' + error.message);
+// Sync blocked users from Firebase (server-side enforcement)
+function syncBlockedUsers() {
+    ensureFirebase().then((db) => {
+        if (!db) return;
+        db.ref('blockedUsers').on('value', (snapshot) => {
+            const data = snapshot.val();
+            blockedUsers = data ? Object.keys(data) : [];
         });
+    });
 }
 
 const SUBJECTS = [
@@ -237,7 +331,7 @@ function sortNotes() {
 }
 
 // ==========================================
-// DISPLAY NOTES WITH ATTACHMENTS - FIX #1
+// DISPLAY NOTES — XSS-SAFE
 // ==========================================
 
 function displayNotesGrid(notesToDisplay, containerId) {
@@ -245,25 +339,35 @@ function displayNotesGrid(notesToDisplay, containerId) {
     if (notesToDisplay.length === 0) {
         html = '<div class="empty-state" style="grid-column: 1/-1;"><h3>No notes found</h3></div>';
     } else {
-        html = notesToDisplay.map(n => `
-            <div class="note-card" onclick="viewNote(${n.id})">
+        html = notesToDisplay.map(n => {
+            const safeId = escapeHTML(n.id);
+            const safeTitle = escapeHTML(n.title);
+            const safeAuthor = escapeHTML(n.author);
+            const safeTopic = escapeHTML(n.topic);
+            const safeDiff = escapeHTML(n.difficulty);
+            const safeContent = escapeHTML(String(n.content).substring(0, 150));
+            const safeViews = parseInt(n.views) || 0;
+            const attCount = Array.isArray(n.attachments) ? n.attachments.length : 0;
+            const tagsHtml = (n.tags && Array.isArray(n.tags)) ? n.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #c7d2fe;">#${escapeHTML(tag)}</span>`).join('') : '';
+            return `
+            <div class="note-card" onclick="viewNote('${safeId}')">
                 ${n.isImportant ? '<div style="position: absolute; top: 10px; right: 10px; background: linear-gradient(135deg,#f59e0b,#fbbf24); color:white; padding:4px 10px; border-radius:20px; font-size:11px; font-weight:700; box-shadow:0 2px 8px rgba(245,158,11,0.4);">⭐ FEATURED</div>' : ''}
                 <div class="note-header">
-                    <div class="note-title">${n.title}</div>
-                    <div class="note-author">by ${n.author}</div>
+                    <div class="note-title">${safeTitle}</div>
+                    <div class="note-author">by ${safeAuthor}</div>
                 </div>
                 <div class="note-content">
-                    <div class="note-meta"><span class="badge">${n.topic}</span> <span class="badge">${n.difficulty}</span></div>
-                    <div class="note-text">${n.content.substring(0, 150)}...</div>
-                    ${n.tags && n.tags.length > 0 ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">${n.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #c7d2fe;">#${tag}</span>`).join('')}</div>` : ''}
-                    ${n.attachments && n.attachments.length > 0 ? `<div style="margin-top: 10px; color: #3b82f6; font-weight: 600; font-size: 12px;">📎 ${n.attachments.length} attachment(s)</div>` : ''}
+                    <div class="note-meta"><span class="badge">${safeTopic}</span> <span class="badge">${safeDiff}</span></div>
+                    <div class="note-text">${safeContent}...</div>
+                    ${tagsHtml ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">${tagsHtml}</div>` : ''}
+                    ${attCount > 0 ? `<div style="margin-top: 10px; color: #3b82f6; font-weight: 600; font-size: 12px;">📎 ${attCount} attachment(s)</div>` : ''}
                 </div>
                 <div class="note-footer">
                     <span class="status-badge status-approved">✓ Published</span>
-                    <span style="margin-left:auto;font-size:12px;color:var(--text-secondary);">👁️ ${n.views || 0} views</span>
+                    <span style="margin-left:auto;font-size:12px;color:var(--text-secondary);">👁️ ${safeViews} views</span>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     }
     const container = document.getElementById(containerId);
     if (container) container.innerHTML = html;
@@ -285,27 +389,35 @@ function loadSubjectNotes() {
         const subjectNotes = getNotesBySubject(subject.id);
         const notesHtml = subjectNotes.length === 0
             ? '<div style="padding:20px;"><p>No notes</p></div>'
-            : subjectNotes.map(n => `
-                <div class="note-card" onclick="viewNote(${n.id})">
+            : subjectNotes.map(n => {
+                const safeId = escapeHTML(n.id);
+                const safeTitle = escapeHTML(n.title);
+                const safeAuthor = escapeHTML(n.author);
+                const safeContent = escapeHTML(String(n.content).substring(0, 100));
+                const safeViews = parseInt(n.views) || 0;
+                const attCount = Array.isArray(n.attachments) ? n.attachments.length : 0;
+                const tagsHtml = (n.tags && Array.isArray(n.tags)) ? n.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;">#${escapeHTML(tag)}</span>`).join('') : '';
+                return `
+                <div class="note-card" onclick="viewNote('${safeId}')">
                     <div class="note-header">
-                        <div class="note-title">${n.title}</div>
-                        <div class="note-author">by ${n.author}</div>
+                        <div class="note-title">${safeTitle}</div>
+                        <div class="note-author">by ${safeAuthor}</div>
                     </div>
                     <div class="note-content">
-                        <div class="note-text">${n.content.substring(0, 100)}...</div>
-                        ${n.tags && n.tags.length > 0 ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;">${n.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;">#${tag}</span>`).join('')}</div>` : ''}
-                        ${n.attachments && n.attachments.length > 0 ? `<div style="margin-top: 8px; color: #3b82f6; font-size: 12px;">📎 ${n.attachments.length}</div>` : ''}
+                        <div class="note-text">${safeContent}...</div>
+                        ${tagsHtml ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;">${tagsHtml}</div>` : ''}
+                        ${attCount > 0 ? `<div style="margin-top: 8px; color: #3b82f6; font-size: 12px;">📎 ${attCount}</div>` : ''}
                     </div>
                     <div class="note-footer">
-                        <span style="font-size:12px;color:var(--text-secondary);">👁️ ${n.views || 0} views</span>
+                        <span style="font-size:12px;color:var(--text-secondary);">👁️ ${safeViews} views</span>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
 
         return `
             <div class="subject-section">
                 <div class="subject-header">
-                    <h2>${subject.emoji} ${subject.name}</h2>
+                    <h2>${escapeHTML(subject.emoji)} ${escapeHTML(subject.name)}</h2>
                     <span class="subject-count">${subjectNotes.length}</span>
                 </div>
                 <div class="subject-notes-grid">${notesHtml}</div>
@@ -329,21 +441,28 @@ function loadMyNotes() {
     const ownerControls = isRoomOwner() || (currentUser && currentUser.role === 'admin');
     const html = myNotes.length === 0
         ? '<div class="empty-state"><h3>No notes</h3></div>'
-        : myNotes.map(n => `
+        : myNotes.map(n => {
+            const safeId = escapeHTML(n.id);
+            const safeTitle = escapeHTML(n.title);
+            const safeContent = escapeHTML(String(n.content).substring(0, 100));
+            const safeViews = parseInt(n.views) || 0;
+            const attCount = Array.isArray(n.attachments) ? n.attachments.length : 0;
+            const tagsHtml = (n.tags && Array.isArray(n.tags)) ? n.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;">#${escapeHTML(tag)}</span>`).join('') : '';
+            return `
             <div class="note-card">
-                <div class="note-header"><div class="note-title">${n.title}</div></div>
+                <div class="note-header"><div class="note-title">${safeTitle}</div></div>
                 <div class="note-content">
-                    <div class="note-text">${n.content.substring(0, 100)}...</div>
-                    ${n.tags && n.tags.length > 0 ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;">${n.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;">#${tag}</span>`).join('')}</div>` : ''}
-                    ${n.attachments && n.attachments.length > 0 ? `<div style="margin-top: 8px; color: #3b82f6; font-size: 12px;">📎 ${n.attachments.length} file(s)</div>` : ''}
+                    <div class="note-text">${safeContent}...</div>
+                    ${tagsHtml ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;">${tagsHtml}</div>` : ''}
+                    ${attCount > 0 ? `<div style="margin-top: 8px; color: #3b82f6; font-size: 12px;">📎 ${attCount} file(s)</div>` : ''}
                 </div>
                 <div class="note-footer">
-                    ${ownerControls ? `<button class="btn btn-small" onclick="editNoteModal(${n.id})">✏️</button>
-                    <button class="btn btn-danger btn-small" onclick="deleteNote(${n.id})">🗑️</button>` : ''}
-                    <span style="margin-left:auto;font-size:12px;color:var(--text-secondary);">👁️ ${n.views || 0} views</span>
+                    ${ownerControls ? `<button class="btn btn-small" onclick="editNoteModal('${safeId}')">✏️</button>
+                    <button class="btn btn-danger btn-small" onclick="deleteNote('${safeId}')">🗑️</button>` : ''}
+                    <span style="margin-left:auto;font-size:12px;color:var(--text-secondary);">👁️ ${safeViews} views</span>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     const container = document.getElementById('myNotesContainer');
     if (container) container.innerHTML = html;
 }
@@ -403,34 +522,46 @@ function joinRoom(e) {
 
     const displayName = userName || 'User_' + roomCode.substring(0, 4);
 
-    // Check if this user generated the room code
-    const generatedCode = localStorage.getItem('generatedRoomCode');
-    const isOwner = (generatedCode === roomCode);
+    firebase.auth().signInAnonymously()
+        .then((userCredential) => {
+            const uid = userCredential.user.uid;
+            const displayName = userName || 'User_' + roomCode.substring(0, 4);
 
-    currentUser = {
-        id: roomCode + '_' + displayName,
-        name: displayName,
-        roomCode: roomCode,
-        isRoomOwner: isOwner
-    };
+            const generatedCode = localStorage.getItem('generatedRoomCode');
+            const isOwner = (generatedCode === roomCode);
 
-    localStorage.setItem('roomCode', roomCode);
-    localStorage.setItem('roomUserName', displayName);
-    localStorage.setItem('isRoomOwner', isOwner ? 'true' : 'false');
-    // Clear the generated code flag after use
-    localStorage.removeItem('generatedRoomCode');
+            currentUser = {
+                id: uid,
+                name: displayName,
+                roomCode: roomCode,
+                isRoomOwner: isOwner
+            };
 
-    const roleLabel = isOwner ? '👑 Owner' : '👤 Member';
-    showAlert(`✅ Joined room: ${roomCode} (${roleLabel})`, 'success', 'loginAlert');
+            localStorage.setItem('roomCode', roomCode);
+            localStorage.setItem('roomUserName', displayName);
+            localStorage.setItem('isRoomOwner', isOwner ? 'true' : 'false');
+            localStorage.removeItem('generatedRoomCode');
 
-    setTimeout(() => {
-        document.getElementById('loginSection').classList.remove('active');
-        document.getElementById('userSection').classList.add('active');
-        document.getElementById('userName').textContent = `🔑 Room: ${roomCode} | ${roleLabel} ${displayName}`;
-        codeEl.value = '';
-        if (nameEl) nameEl.value = '';
-        startNotesSync();
-    }, 800);
+            const roleLabel = isOwner ? '👑 Owner' : '👤 Member';
+            showAlert(`✅ Joined room: ${roomCode} (${roleLabel})`, 'success', 'loginAlert');
+
+            setTimeout(() => {
+                document.getElementById('loginSection').classList.remove('active');
+                document.getElementById('userSection').classList.add('active');
+                document.getElementById('userName').textContent = `🔑 Room: ${roomCode} | ${roleLabel} ${displayName}`;
+                codeEl.value = '';
+                if (nameEl) nameEl.value = '';
+                startNotesSync();
+            }, 800);
+        })
+        .catch((error) => {
+            console.error("Anonymous auth error", error);
+            if (error.code === 'auth/too-many-requests') {
+                showAlert('❌ Too many attempts. Try again later.', 'danger', 'loginAlert');
+            } else {
+                showAlert('❌ Failed to join room: ' + error.message, 'danger', 'loginAlert');
+            }
+        });
 }
 
 // ==========================================
@@ -440,22 +571,39 @@ function joinRoom(e) {
 function generateRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
+    const randomValues = new Uint32Array(8);
+    window.crypto.getRandomValues(randomValues);
     for (let i = 0; i < 8; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+        code += chars[randomValues[i] % chars.length];
     }
     const input = document.getElementById('roomCodeField');
     if (input) {
         input.value = code;
         input.focus();
     }
-    // Flag that this user generated this room code
     localStorage.setItem('generatedRoomCode', code);
 }
 
 // ==========================================
-// ADMIN LOGIN
+// ADMIN LOGIN & PASSWORD RESET
 // ==========================================
 // (handled by loginAdmin at top of file using Firebase Auth)
+
+function resetAdminPassword() {
+    const email = document.getElementById('adminEmailField').value.trim();
+    if (!email) {
+        showAlert('❌ Please enter your admin email first', 'danger', 'loginAlert');
+        return;
+    }
+    firebase.auth().sendPasswordResetEmail(email)
+        .then(() => {
+            showAlert('✅ Password reset email sent! Check your inbox.', 'success', 'loginAlert');
+        })
+        .catch((error) => {
+            console.error('Password reset error:', error);
+            showAlert('❌ Failed to send reset email. Check the email address.', 'danger', 'loginAlert');
+        });
+}
 
 // ==========================================
 // SHARE NOTE
@@ -558,23 +706,26 @@ function shareNote(e) {
     if (files.length === 0) {
         saveNote();
     } else {
+        const storageRef = firebase.storage().ref();
         for (let i = 0; i < files.length; i++) {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                attachments.push({
-                    name: files[i].name,
-                    size: files[i].size,
-                    type: files[i].type,
-                    data: ev.target.result  // Store the actual file data (DataURL)
+            const file = files[i];
+            const fileRef = storageRef.child(`attachments/${Date.now()}_${generateSecureId()}_${file.name}`);
+            
+            fileRef.put(file).then((snapshot) => {
+                snapshot.ref.getDownloadURL().then((url) => {
+                    attachments.push({
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        data: url // Store download URL instead of base64
+                    });
+                    processed++;
+                    console.log('📎 File uploaded:', file.name);
+                    if (processed === files.length) saveNote();
                 });
-                processed++;
-                console.log('📎 File loaded:', files[i].name, 'Size:', files[i].size);
-                if (processed === files.length) saveNote();
-            };
-            reader.onerror = () => {
-                showAlert('❌ Error reading file', 'danger', 'userAlert');
-            };
-            reader.readAsDataURL(files[i]);
+            }).catch(error => {
+                showAlert('❌ Error uploading file: ' + error.message, 'danger', 'userAlert');
+            });
         }
     }
 }
@@ -612,19 +763,19 @@ function viewNote(id) {
         <div style="margin-bottom: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
                 <div>
-                    <h3 style="margin: 0 0 5px 0;">${note.title}</h3>
-                    <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">by <strong>${note.author}</strong></p>
+                    <h3 style="margin: 0 0 5px 0;">${escapeHTML(note.title)}</h3>
+                    <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">by <strong>${escapeHTML(note.author)}</strong></p>
                 </div>
             </div>
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; padding: 10px; background: var(--bg-light); border-radius: 6px;">
                 <div>
                     <span style="color: var(--text-secondary); font-size: 12px;">📚 Topic:</span>
-                    <div style="font-weight: 600;">${note.topic}</div>
+                    <div style="font-weight: 600;">${escapeHTML(note.topic)}</div>
                 </div>
                 <div>
                     <span style="color: var(--text-secondary); font-size: 12px;">📊 Difficulty:</span>
-                    <div style="font-weight: 600;">${note.difficulty}</div>
+                    <div style="font-weight: 600;">${escapeHTML(note.difficulty)}</div>
                 </div>
                 <div>
                     <span style="color: var(--text-secondary); font-size: 12px;">👁️ Views:</span>
@@ -632,12 +783,12 @@ function viewNote(id) {
                 </div>
                 ${note.tags && note.tags.length > 0 ? `<div>
                     <span style="color: var(--text-secondary); font-size: 12px;">🏷️ Tags:</span>
-                    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:3px;">${note.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #c7d2fe;">#${tag}</span>`).join('')}</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:3px;">${note.tags.map(tag => `<span style="background:#f0f4ff;color:#4f46e5;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #c7d2fe;">#${escapeHTML(tag)}</span>`).join('')}</div>
                 </div>` : ''}
             </div>
             
             <div style="margin-bottom: 15px;">
-                <p style="white-space: pre-wrap; line-height: 1.6;">${note.content}</p>
+                <p style="white-space: pre-wrap; line-height: 1.6;">${escapeHTML(note.content)}</p>
             </div>
     `;
 
@@ -650,10 +801,10 @@ function viewNote(id) {
                     ${note.attachments.map((att, idx) => `
                         <div style="padding: 12px; background: var(--bg-light); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
                             <div>
-                                <div style="font-weight: 600;">📄 ${att.name}</div>
+                                <div style="font-weight: 600;">📄 ${escapeHTML(att.name)}</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">${att.size ? (att.size / 1024).toFixed(1) + ' KB' : 'Size unknown'}</div>
                             </div>
-                            ${att.data ? `<a href="${att.data}" download="${att.name}" style="padding: 8px 12px; background: var(--primary); color: white; border-radius: 4px; text-decoration: none; font-size: 12px; cursor: pointer;">⬇️ Download</a>` : '<span style="color: var(--text-secondary); font-size: 12px;">No file</span>'}
+                            ${att.data ? `<a href="${escapeHTML(att.data)}" download="${escapeHTML(att.name)}" style="padding: 8px 12px; background: var(--primary); color: white; border-radius: 4px; text-decoration: none; font-size: 12px; cursor: pointer;">⬇️ Download</a>` : '<span style="color: var(--text-secondary); font-size: 12px;">No file</span>'}
                         </div>
                     `).join('')}
                 </div>
@@ -809,14 +960,14 @@ function loadAdminPublished() {
         : published.map(n => `
             <div class="note-card">
                 <div class="note-header">
-                    <div class="note-title">${n.title}</div>
-                    <div class="note-author">by ${n.author}</div>
+                    <div class="note-title">${escapeHTML(n.title)}</div>
+                    <div class="note-author">by ${escapeHTML(n.author)}</div>
                 </div>
                 <div class="note-content">
                     <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">
-                        📚 ${n.topic} | 📊 ${n.difficulty}
+                        📚 ${escapeHTML(n.topic)} | 📊 ${escapeHTML(n.difficulty)}
                     </div>
-                    <div class="note-text">${n.content.substring(0, 150)}${n.content.length > 150 ? '...' : ''}</div>
+                    <div class="note-text">${escapeHTML(String(n.content).substring(0, 150))}${n.content.length > 150 ? '...' : ''}</div>
                     ${n.attachments && n.attachments.length > 0 ? `<div style="margin-top: 8px; color: #3b82f6; font-size: 12px;">📎 ${n.attachments.length} file(s)</div>` : ''}
                 </div>
                 <div class="note-footer">
@@ -985,6 +1136,77 @@ function switchLoginTab(tab) {
 }
 
 // ==========================================
+// TASKS
+// ==========================================
+
+function addTask() {
+    const input = document.getElementById('taskInput');
+    if (!input || !input.value.trim()) {
+        showAlert('❌ Please enter a task', 'danger', 'userAlert');
+        return;
+    }
+
+    const task = {
+        id: generateSecureId(),
+        title: sanitizeInput(input.value.trim(), 200),
+        completed: false,
+        createdAt: new Date().toISOString()
+    };
+
+    tasks.push(task);
+    localStorage.setItem('tasks', JSON.stringify(tasks));
+    input.value = '';
+    renderTasks();
+}
+
+function toggleTask(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (task) {
+        task.completed = !task.completed;
+        localStorage.setItem('tasks', JSON.stringify(tasks));
+        renderTasks();
+    }
+}
+
+function deleteTask(taskId) {
+    tasks = tasks.filter(t => t.id !== taskId);
+    localStorage.setItem('tasks', JSON.stringify(tasks));
+    renderTasks();
+}
+
+function renderTasks() {
+    // Remove tasks older than 24 hours
+    const now = new Date();
+    tasks = tasks.filter(t => (now - new Date(t.createdAt)) < 24 * 60 * 60 * 1000);
+    localStorage.setItem('tasks', JSON.stringify(tasks));
+
+    const container = document.getElementById('tasksList');
+    if (!container) return;
+
+    if (tasks.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state" style="padding: 40px 20px;">
+                <div class="empty-state-icon">📝</div>
+                <h3>No Tasks</h3>
+                <p>Add a task to get started!</p>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = tasks.map(t => `
+        <div class="task-item ${t.completed ? 'completed' : ''}">
+            <input type="checkbox" class="task-checkbox" ${t.completed ? 'checked' : ''}
+                onchange="toggleTask('${escapeHTML(t.id)}')">
+            <div class="task-content">
+                <div class="task-text">${escapeHTML(t.title)}</div>
+                <div class="task-time">${new Date(t.createdAt).toLocaleString()}</div>
+            </div>
+            <button class="btn btn-danger btn-small" onclick="deleteTask('${escapeHTML(t.id)}')" style="padding:6px 10px;">🗑️</button>
+        </div>
+    `).join('');
+}
+
+// ==========================================
 // INITIALIZE
 // ==========================================
 
@@ -1005,31 +1227,49 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, 100);
 
-    const isAdmin = localStorage.getItem('isAdmin');
     const savedRoomCode = localStorage.getItem('roomCode');
     const savedRoomName = localStorage.getItem('roomUserName');
 
-    if (isAdmin === 'true') {
-        currentUser = { id: 'admin', role: 'admin' };
-        document.getElementById('loginSection').classList.remove('active');
-        document.getElementById('adminSection').classList.add('active');
-        updateAdminDashboard();
-        startNotesSync();
-    } else if (savedRoomCode) {
-        const displayName = savedRoomName || 'User_' + savedRoomCode.substring(0, 4);
-        const savedIsOwner = localStorage.getItem('isRoomOwner') === 'true';
-        currentUser = {
-            id: savedRoomCode + '_' + displayName,
-            name: displayName,
-            roomCode: savedRoomCode,
-            isRoomOwner: savedIsOwner
-        };
-        const roleLabel = savedIsOwner ? '👑 Owner' : '👤 Member';
-        document.getElementById('loginSection').classList.remove('active');
-        document.getElementById('userSection').classList.add('active');
-        document.getElementById('userName').textContent = `🔑 Room: ${savedRoomCode} | ${roleLabel} ${displayName}`;
-        startNotesSync();
-    }
+    firebase.auth().onAuthStateChanged((user) => {
+        if (user) {
+            // Check if user is admin
+            ensureFirebase().then(db => {
+                db.ref('admins/' + user.uid).once('value').then(snapshot => {
+                    if (snapshot.exists() && snapshot.val() === true) {
+                        if (window.isAdminPage) {
+                            currentUser = { id: 'admin', role: 'admin', uid: user.uid };
+                            const loginSec = document.getElementById('loginSection');
+                            const adminSec = document.getElementById('adminSection');
+                            if (loginSec) loginSec.classList.remove('active');
+                            if (adminSec) adminSec.classList.add('active');
+                            updateAdminDashboard();
+                            startNotesSync();
+                            syncBlockedUsers();
+                        }
+                    } else if (savedRoomCode && !window.isAdminPage) {
+                        // Regular user
+                        const displayName = savedRoomName || 'User_' + savedRoomCode.substring(0, 4);
+                        const savedIsOwner = localStorage.getItem('isRoomOwner') === 'true';
+                        currentUser = {
+                            id: user.uid,
+                            name: displayName,
+                            roomCode: savedRoomCode,
+                            isRoomOwner: savedIsOwner
+                        };
+                        const roleLabel = savedIsOwner ? '👑 Owner' : '👤 Member';
+                        const loginSec = document.getElementById('loginSection');
+                        const userSec = document.getElementById('userSection');
+                        if (loginSec) loginSec.classList.remove('active');
+                        if (userSec) userSec.classList.add('active');
+                        
+                        const userNameEl = document.getElementById('userName');
+                        if(userNameEl) userNameEl.textContent = `🔑 Room: ${savedRoomCode} | ${roleLabel} ${displayName}`;
+                        startNotesSync();
+                    }
+                });
+            });
+        }
+    });
 
     // Export functions
     window.toggleDarkMode = toggleDarkMode;
@@ -1053,6 +1293,9 @@ document.addEventListener('DOMContentLoaded', () => {
     window.searchNotes = searchNotes;
     window.filterAndSearchNotes = filterAndSearchNotes;
     window.sortNotes = sortNotes;
+    window.addTask = addTask;
+    window.toggleTask = toggleTask;
+    window.deleteTask = deleteTask;
 
     console.log('✅ App fully initialized');
 });
